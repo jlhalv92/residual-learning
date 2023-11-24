@@ -5,7 +5,7 @@ import torch.optim as optim
 
 from mushroom_rl.algorithms.actor_critic.deep_actor_critic import DeepAC
 from mushroom_rl.policy import Policy
-from mushroom_rl.approximators import Regressor
+from src.mushroom_extension.regressor import Regressor
 from mushroom_rl.approximators.parametric import TorchApproximator
 from mushroom_rl.utils.replay_memory import ReplayMemory
 from mushroom_rl.utils.torch import to_float_tensor

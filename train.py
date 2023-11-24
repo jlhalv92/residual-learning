@@ -142,7 +142,6 @@ def experiment(alg, n_epochs, n_steps, n_steps_test, tasks, experiment_name, mod
                     actor_optimizer, critic_params, batch_size, initial_replay_size,
                     max_replay_size, warmup_transitions, tau, lr_alpha,
                     critic_fit_params=None)
-    agent
     # Algorithm
     core = Core(agent, mdp)
 
