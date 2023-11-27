@@ -70,18 +70,21 @@ class ActorNetwork(nn.Module):
         return a
 
 
-def experiment(alg, n_epochs, n_steps, n_steps_test, tasks, experiment_name, model_dir,
+def experiment(alg, n_epochs, n_steps, n_steps_test, tasks, experiment_name, model,
                load_task_name="",
                load_model=False,
                stop_logging=False,
-               residual=False):
+               model_type="", model_dir=""):
 
     np.random.seed()
 
     logger = Logger(alg.__name__, results_dir=None)
     logger.strong_line()
     logger.info('Experiment Algorithm: ' + alg.__name__)
-    dir_path = os.path.join(model_dir, experiment_name)
+    logger.info("Experiment name: " + experiment_name)
+
+    dir_path = os.path.join(model_dir, model_type)
+    # dir_path =model_dir
     if not os.path.isdir(dir_path):
         os.mkdir(dir_path)
     # MDP
@@ -101,11 +104,12 @@ def experiment(alg, n_epochs, n_steps, n_steps_test, tasks, experiment_name, mod
     mdp = DMControl('walker', tasks[0], horizon, gamma, use_pixels=False)
 
     use_cuda = torch.cuda.is_available()
+
     if load_model:
-        agent_path = os.path.join(model_dir, experiment_name, experiment_name + '_{}'.format(load_task_name))
+        agent_path = os.path.join(model)
         agent = Agent.load(agent_path)
 
-        if residual:
+        if model_type == "residual":
             agent.residual = True
 
     # Approximator
@@ -156,11 +160,14 @@ def experiment(alg, n_epochs, n_steps, n_steps_test, tasks, experiment_name, mod
 
     logger.epoch_info(0, J=J, R=R, entropy=E)
 
-    if log_wandb and not stop_logging:
+    exp_name = "walker_SAC_{}_{}".format(experiment_name,model_type)
+
+
+    if log_wandb:
         wandb.init(
             # set the wandb project where this run will be logged
-            project="robot_locomotion",
-            name="Experiment_SAC_{}".format(experiment_name)
+            project="residual_learning_locomotion",
+            name=exp_name
         )
 
     core.learn(n_steps=initial_replay_size, n_steps_per_fit=initial_replay_size, quiet=True)
@@ -180,11 +187,8 @@ def experiment(alg, n_epochs, n_steps, n_steps_test, tasks, experiment_name, mod
         if log_wandb:
             wandb.log(logs_dict)
 
-    if residual:
-        agent_path = os.path.join(model_dir, experiment_name, experiment_name + '_{}_{}'.format(tasks[0],"residual"))
-    else:
-        agent_path = os.path.join(model_dir, experiment_name, experiment_name + '_{}'.format(tasks[0]))
 
+    agent_path = os.path.join(dir_path, experiment_name + '_{}_{}'.format(tasks[0],model_type))
 
 
     agent.save(agent_path)
@@ -192,13 +196,28 @@ def experiment(alg, n_epochs, n_steps, n_steps_test, tasks, experiment_name, mod
     if stop_logging:
         wandb.finish()
 
-    logger.info('Press a button to visualize')
-    input()
-    core.evaluate(n_episodes=5, render=True)
+    # logger.info('Press a button to visualize')
+    # input()
+    # core.evaluate(n_episodes=5, render=True)
 
 
 if __name__ == '__main__':
-    print("Experiment 1")
-    # experiment(alg=SAC, n_epochs=10, n_steps=4000, n_steps_test=3000, tasks=["walk"], experiment_name="test_walk_fast_01", load_model=False, model_dir = "src/checkpoint")
-    print("Experiment 2")
-    experiment(alg=SAC, n_epochs=100, n_steps=4000, n_steps_test=3000, tasks=["run"], experiment_name="test_walk_fast_01", load_model=True, model_dir = "src/checkpoint", load_task_name = "walk", stop_logging= False, residual=True)
+    # print("Experiment 1")
+    # # experiment(alg=SAC, n_epochs=10, n_steps=4000, n_steps_test=3000, tasks=["walk"], experiment_name="test_walk_fast_01", load_model=False, model_dir = "src/checkpoint")
+    #
+    # print("Experiment 2")
+    runs = np.arange(10)
+    for run in runs:
+
+        experiment(alg=SAC,
+                   n_epochs=100,
+                   n_steps=4000,
+                   n_steps_test=3000,
+                   tasks=["run"],
+                   experiment_name="EXP_{}".format(run),
+                   load_model=False,
+                   model= "/home/jose-luis/Project/residual_learning/src/checkpoint/nominal_model/model_10",
+                   load_task_name ="walk",
+                   stop_logging=True,
+                   model_type="direct_run",
+                   model_dir="src/checkpoint/walker_exp")
