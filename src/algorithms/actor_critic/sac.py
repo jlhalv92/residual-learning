@@ -350,7 +350,6 @@ class SAC(DeepAC):
             q_next = self._next_q(next_state, absorbing)
 
             if self._residual():
-
                 q_nominal = self._q_nominal(state, action)
                 q = reward + self.mdp_info.gamma * q_next - q_nominal
             else:
@@ -377,6 +376,7 @@ class SAC(DeepAC):
             if not self._residual():
                 target[i+2].set_weights(weights)
                 freeze_weights(target[i+2].network)
+
 
     def _loss(self, state, action_new, log_prob):
         q_0 = self._critic_approximator(state, action_new,
@@ -427,7 +427,7 @@ class SAC(DeepAC):
 
         ensemble_q_target_array = self._ensemble_target_critic_approximator.predict(state, action, prediction='all')
 
-        q = ensemble_q_target_array[:-2, :].min(0)
+        q = ensemble_q_target_array[-2:, :].min(0)
 
         return q
 

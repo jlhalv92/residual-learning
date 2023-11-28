@@ -167,7 +167,7 @@ def experiment(alg, n_epochs, n_steps, n_steps_test, tasks, experiment_name, mod
 
     logger.epoch_info(0, J=J, R=R, entropy=E)
 
-    exp_name = "walker_SAC_{}_2".format(model_type)
+    exp_name = "walker_SAC_{}_4".format(model_type)
 
 
     if log_wandb:
@@ -211,29 +211,29 @@ def experiment(alg, n_epochs, n_steps, n_steps_test, tasks, experiment_name, mod
 if __name__ == '__main__':
 
 
-    experiment(alg=SAC,
-               n_epochs=30,
-               n_steps=4000,
-               n_steps_test=3000,
-               tasks=["walk"],
-               experiment_name="EXP_{}".format(0),
-               load_model=False,
-               model="/home/jose-luis/Project/residual_learning/src/checkpoint/nominal_model/model_10",
-               stop_logging=True,
-               model_type="walk",
-               model_dir="src/checkpoint/walker_walk_nominal")
+    # experiment(alg=SAC,
+    #            n_epochs=30,
+    #            n_steps=4000,
+    #            n_steps_test=3000,
+    #            tasks=["run"],
+    #            experiment_name="EXP_{}".format(0),
+    #            load_model=True,
+    #            model="/home/jose-luis/Project/residual_learning/src/checkpoint/nominal_model/model_10",
+    #            stop_logging=True,
+    #            model_type="walk",
+    #            model_dir="src/checkpoint/walker_walk_nominal")
 
-    # runs = np.arange(10)
-    # for run in runs:
-    #
-    #     experiment(alg=SAC,
-    #                n_epochs=80,
-    #                n_steps=4000,
-    #                n_steps_test=3000,
-    #                tasks=["run"],
-    #                experiment_name="EXP_{}".format(run),
-    #                load_model=True,
-    #                model= "/home/jose-luis/Project/residual_learning/src/checkpoint/nominal_model/model_10",
-    #                stop_logging=True,
-    #                model_type="residual",
-    #                model_dir="src/checkpoint/walker_exp_01")
+    runs = np.arange(10)
+    for run in runs:
+
+        experiment(alg=SAC,
+                   n_epochs=80,
+                   n_steps=4000,
+                   n_steps_test=3000,
+                   tasks=["run"],
+                   experiment_name="EXP_{}".format(run),
+                   load_model=True,
+                   model= "/home/jose-luis/Project/residual_learning/src/checkpoint/walker_walk_nominal/walk/EXP_0_walk_walk",
+                   stop_logging=True,
+                   model_type="residual",
+                   model_dir="src/checkpoint/walker_exp_02")
