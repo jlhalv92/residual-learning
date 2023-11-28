@@ -12,6 +12,8 @@ from mushroom_rl.core import Core, Logger
 from src.mushroom_extension.dm_control_env import DMControl
 from mushroom_rl.utils.dataset import compute_J, parse_dataset
 from mushroom_rl.core import Agent
+from mushroom_rl.utils.parameters import to_parameter
+
 
 from tqdm import trange
 
@@ -71,7 +73,6 @@ class ActorNetwork(nn.Module):
 
 
 def experiment(alg, n_epochs, n_steps, n_steps_test, tasks, experiment_name, model,
-               load_task_name="",
                load_model=False,
                stop_logging=False,
                model_type="", model_dir=""):
@@ -83,10 +84,15 @@ def experiment(alg, n_epochs, n_steps, n_steps_test, tasks, experiment_name, mod
     logger.info('Experiment Algorithm: ' + alg.__name__)
     logger.info("Experiment name: " + experiment_name)
 
-    dir_path = os.path.join(model_dir, model_type)
+
     # dir_path =model_dir
-    if not os.path.isdir(dir_path):
-        os.mkdir(dir_path)
+    if not os.path.isdir(model_dir):
+        os.mkdir(model_dir)
+        dir_path = os.path.join(model_dir, model_type)
+        if not os.path.isdir(dir_path):
+            os.mkdir(dir_path)
+
+
     # MDP
     horizon = 500
     gamma = 0.99
@@ -110,7 +116,8 @@ def experiment(alg, n_epochs, n_steps, n_steps_test, tasks, experiment_name, mod
         agent = Agent.load(agent_path)
 
         if model_type == "residual":
-            agent.residual = True
+            print("activate residual")
+            agent._residual = to_parameter(True)
 
     # Approximator
     else:
@@ -160,7 +167,7 @@ def experiment(alg, n_epochs, n_steps, n_steps_test, tasks, experiment_name, mod
 
     logger.epoch_info(0, J=J, R=R, entropy=E)
 
-    exp_name = "walker_SAC_{}_{}".format(experiment_name,model_type)
+    exp_name = "walker_SAC_{}_2".format(model_type)
 
 
     if log_wandb:
@@ -202,22 +209,31 @@ def experiment(alg, n_epochs, n_steps, n_steps_test, tasks, experiment_name, mod
 
 
 if __name__ == '__main__':
-    # print("Experiment 1")
-    # # experiment(alg=SAC, n_epochs=10, n_steps=4000, n_steps_test=3000, tasks=["walk"], experiment_name="test_walk_fast_01", load_model=False, model_dir = "src/checkpoint")
-    #
-    # print("Experiment 2")
-    runs = np.arange(10)
-    for run in runs:
 
-        experiment(alg=SAC,
-                   n_epochs=100,
-                   n_steps=4000,
-                   n_steps_test=3000,
-                   tasks=["run"],
-                   experiment_name="EXP_{}".format(run),
-                   load_model=False,
-                   model= "/home/jose-luis/Project/residual_learning/src/checkpoint/nominal_model/model_10",
-                   load_task_name ="walk",
-                   stop_logging=True,
-                   model_type="direct_run",
-                   model_dir="src/checkpoint/walker_exp")
+
+    experiment(alg=SAC,
+               n_epochs=30,
+               n_steps=4000,
+               n_steps_test=3000,
+               tasks=["walk"],
+               experiment_name="EXP_{}".format(0),
+               load_model=False,
+               model="/home/jose-luis/Project/residual_learning/src/checkpoint/nominal_model/model_10",
+               stop_logging=True,
+               model_type="walk",
+               model_dir="src/checkpoint/walker_walk_nominal")
+
+    # runs = np.arange(10)
+    # for run in runs:
+    #
+    #     experiment(alg=SAC,
+    #                n_epochs=80,
+    #                n_steps=4000,
+    #                n_steps_test=3000,
+    #                tasks=["run"],
+    #                experiment_name="EXP_{}".format(run),
+    #                load_model=True,
+    #                model= "/home/jose-luis/Project/residual_learning/src/checkpoint/nominal_model/model_10",
+    #                stop_logging=True,
+    #                model_type="residual",
+    #                model_dir="src/checkpoint/walker_exp_01")

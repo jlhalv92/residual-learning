@@ -348,8 +348,9 @@ class SAC(DeepAC):
                 self._update_alpha(log_prob.detach())
 
             q_next = self._next_q(next_state, absorbing)
+
             if self._residual():
-                print("hi")
+
                 q_nominal = self._q_nominal(state, action)
                 q = reward + self.mdp_info.gamma * q_next - q_nominal
             else:
