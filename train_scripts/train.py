@@ -415,7 +415,7 @@ if __name__ == '__main__':
                    logging=False,
                    model_name="{}_{}".format(model_name,run),
                    model_name_logging="{}".format(model_name),
-                   model_dir="src/checkpoint/walker",
+                   model_dir="../src/checkpoint/walker",
                    use_prior=True,
                    use_kl_on_pi=True,
                    transfer=False,

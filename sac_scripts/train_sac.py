@@ -5,8 +5,8 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 import os
-from mushroom_rl.algorithms.actor_critic.deep_actor_critic import SAC
-from src.algorithms.actor_critic.brl import BRL
+from src.algorithms.actor_critic.sac import SAC
+# from src.algorithms.actor_critic.brl import BRL
 from mushroom_rl.core import Logger, Core
 from src.mushroom_extension.dm_control_env import DMControl
 from mushroom_rl.utils.dataset import compute_J, parse_dataset
@@ -129,34 +129,16 @@ def experiment(alg,
 
     model_path = os.path.join(model_dir, model_name)
 
-    if boosting:
 
-        prior_paths = model
-        prior_agents = list()
-        for agent_path in prior_paths:
-            prior_agents.append(Agent.load(agent_path))
-
-        agent = alg(mdp.info, actor_mu_params, actor_sigma_params, actor_optimizer,critic_params,
-                     batch_size=batch_size,initial_replay_size=initial_replay_size,
-                     max_replay_size=max_replay_size,
-                    warmup_transitions=warmup_transitions,
-                     tau=tau,
-                    lr_alpha=lr_alpha,
-                    log_std_min=log_std_min,
-                    prior_agent=prior_agents[0],
-                    use_entropy=True)
-
-        prior_model = Agent.load(agent_path)
-        agent.setup_boosting(prior_agents=prior_agents,
-                             prior_model=prior_model,
-                             residual_name=residual_name,
-                             use_kl_on_pi=use_kl_on_pi,
-                             kl_on_pi_alpha=1)
-    else:
-        agent = alg(mdp.info, actor_mu_params, actor_sigma_params,
-                    actor_optimizer, critic_params, batch_size, initial_replay_size,
-                    max_replay_size, warmup_transitions, tau, lr_alpha,
-                    critic_fit_params=None)
+    agent = alg(mdp.info, actor_mu_params, actor_sigma_params,
+                actor_optimizer,
+                critic_params, batch_size,
+                initial_replay_size,
+                max_replay_size,
+                warmup_transitions,
+                tau,
+                lr_alpha,
+                critic_fit_params=None)
 
     # Algorithm
     core = Core(agent, mdp)
@@ -165,7 +147,7 @@ def experiment(alg,
     if logging:
         wandb.init(
             # set the wandb project where this run will be logged
-            project="residual_learning_Resnet_Experiments",
+            project="residual_learning_benchmark",
             name=exp_name
         )
 
@@ -194,10 +176,7 @@ def experiment(alg,
         J = np.mean(compute_J(dataset, mdp.info.gamma))
         R = np.mean(compute_J(dataset))
         E = agent.policy.entropy(s)
-        Q = np.array(agent.q).mean()
-        old_Q = np.array(agent.q_old).mean()
-        rho = np.array(agent.rho).mean()
-
+        Q = np.array(agent.Q).mean()
 
         q_loss = core.agent._critic_approximator[0].loss_fit
 
@@ -209,11 +188,11 @@ def experiment(alg,
         #     critic = core.agent._target_critic_approximator
         #     agent.reset_parameters(critic)
 
-        logs_dict = {"RETURN": J, "REWARD": R, "ENTROPY": E, "q_loss":q_loss, "Q":Q, "old_Q":old_Q, "rho":rho}
+        logs_dict = {"RETURN": J, "REWARD": R, "ENTROPY": E, "q_loss":q_loss, "Q":Q}
 
         if logging:
             wandb.log(logs_dict, step=n+starting_epoch)
-        logger.epoch_info(n + 1 + starting_epoch, J=J, R=R, entropy=E,q_loss=q_loss, Q=Q, old_Q=old_Q, rho=rho, velocity=np.mean(core.mdp.horizontal_velocity), upright=np.mean(core.mdp.upright))
+        logger.epoch_info(n + 1 + starting_epoch, J=J, R=R, entropy=E,q_loss=q_loss, Q=Q, velocity=np.mean(core.mdp.horizontal_velocity), upright=np.mean(core.mdp.upright))
         core.mdp.horizontal_velocity = []
         core.mdp.upright =[]
 
@@ -229,41 +208,31 @@ def experiment(alg,
 
 if __name__ == '__main__':
 
-    experiments = [2]
+    experiments = [0]
     n_steps= 4000 # training
     n_steps_test=3000
-
-
     tasks = ["stand", "walk", "run"]
     run_velocities = [0, 1, 8]
-    critics = [Q0,Q1,Q0]
-    epochs = [20, 20, 100]
-    critics = [Q0, Q1, Q0]
-    for exp in experiments:
+    critics = [CriticNetwork,CriticNetwork,CriticNetwork]
+    epochs = [10, 20, 100]
+    seed = 5
+    for i in range(seed):
+        for exp in experiments:
 
-        print("Run experiment {}, for task {} with target velocity {} ". format(exp, tasks[exp], run_velocities[exp]))
-
-
-        model_name = "agent_run"
-        boosting = False
-        if exp >= 1:
-            boosting = False
-        experiment(alg=BRL,
-                   n_epochs=epochs[exp],
-                   starting_epoch=0,
-                   n_steps=n_steps,
-                   n_steps_test=n_steps_test,
-                   tasks=[tasks[exp]],
-                   model=["src/checkpoint/boosted_curriculum/Q_0"],
-                   logging=False,
-                   model_name="{}_{}".format(model_name,exp),
-                   model_name_logging="{}".format(model_name),
-                   model_dir="../src/checkpoint/run_walker",
-                   boosting=boosting,
-                   use_kl_on_pi=False,
-                   hard_task=False,
-                   target_velocity=run_velocities[exp],
-                   residual_name = "_rho_{}".format(exp),
-                   Critic=critics[exp]
-                   )
+            print("Run experiment {}, for task {} with target velocity {} ". format(exp, tasks[exp], run_velocities[exp]))
+            model_name = "agent_sac_walker_stand"
+            experiment(alg=SAC,
+                       n_epochs=epochs[exp],
+                       starting_epoch=0,
+                       n_steps=n_steps,
+                       n_steps_test=n_steps_test,
+                       tasks=[tasks[exp]],
+                       logging=False,
+                       model_name="agent_sac_walker_stand",
+                       model_name_logging="{}".format(model_name),
+                       model_dir="../src/checkpoint/run_walker",
+                       hard_task=False,
+                       target_velocity=run_velocities[exp],
+                       Critic=critics[exp]
+                       )
 
