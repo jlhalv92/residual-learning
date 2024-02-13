@@ -221,7 +221,7 @@ def experiment(alg,
 
                 agent.setup_boosting(prior_agents=prior_agents,
                                      use_kl_on_pi=use_kl_on_pi,
-                                     kl_on_pi_alpha=1e-1,
+                                     kl_on_pi_alpha=0.5,
                                      state_old_q=state_old_q,
                                      use_prior_policy=use_prior_policy,
                                      coef_prior_q=residual_coef,

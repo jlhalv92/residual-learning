@@ -204,7 +204,7 @@ class SACPolicy(Policy):
                      self._sigma_approximator.model.network.parameters())
 
 
-class SAC(DeepAC):
+class ResidualSAC(DeepAC):
     """
     Soft Actor-Critic algorithm.
     "Soft Actor-Critic Algorithms and Applications".
@@ -247,6 +247,9 @@ class SAC(DeepAC):
         """
 
         self.Q = []
+        self.q_old = []
+        self.rho = []
+
 
         self._critic_fit_params = dict() if critic_fit_params is None else critic_fit_params
 
@@ -314,12 +317,76 @@ class SAC(DeepAC):
         )
 
         super().__init__(mdp_info, policy, actor_optimizer, policy_parameters)
+    def setup_boosting(self, prior_agents, use_kl_on_pi=False, kl_on_pi_alpha=1e-3, use_old_policy=False):
+        """
+            prior_agents ([mushroom object list]): The agent object from agents trained on prior tasks;
+            use_kl_on_pi (bool): Whether to use a kl between the prior task policy and the new policy as a loss on the policy
+            kl_on_pi_alpha (float): Alpha parameter to weight the KL divergence loss on the policy
+        """
+
+        self._boosting = True
+        self._prior_critic_approximators = list()
+        self._prior_policies = list()
+        self._prior_state_dims = list()
+
+        for prior_agent in prior_agents:
+            self._prior_critic_approximators.append(prior_agent._target_critic_approximator)  # The target_critic_approximator object from agents trained on prior tasks
+            self._prior_policies.append(prior_agent.policy)  # The policy object from an agent trained on a prior task
+
+        if use_old_policy:
+            self.policy.set_weights(self._prior_policies[-1].get_weights())
+
+        self.copy_weights_critic(self._prior_critic_approximators[-1], self._target_critic_approximator)
+
+        self.copy_weights_critic(self._prior_critic_approximators[-1], self._critic_approximator)
+
+        self._use_kl_on_pi = use_kl_on_pi  # Whether to use a kl between the prior task policy and the new policy as a loss for the new policy
+        self._kl_on_pi_alpha = kl_on_pi_alpha  # Alpha parameter to weight the KL divergence loss on the policy
+        self._kl_with_prior = np.array([0.0])  # KL divergence with previous policy (numpy)
+        self._kl_with_prior_t = torch.tensor(0.0)  # KL divergence with previous policy (torch)
+
+    def copy_weights_critic(self, old_critic, current_critic):
+
+        for i in range(len(old_critic)):
+            new_state_dict = current_critic[i].network.state_dict()
+            old_state_dict = old_critic[i].network.state_dict()
+            keys = list(old_state_dict.keys())[:-2]
+            # keys_freeze = list(new_state_dict.keys())[:-4]
+            filtered_dict = {key: old_state_dict[key] for key in keys}
+            new_state_dict.update(filtered_dict)
+            current_critic[i].network.load_state_dict(new_state_dict, strict=False)
+
+            for name, param in current_critic[i].network.named_parameters():
+                if name in keys:
+                    param.requires_grad = False
 
     def fit(self, dataset):
         self._replay_memory.add(dataset)
         if self._replay_memory.initialized:
             state, action, reward, next_state, absorbing, _ = \
                 self._replay_memory.get(self._batch_size())
+
+
+            if self._boosting:
+                if self._use_kl_on_pi:
+                    # Calculate KL divergence between current policy and previous policy
+                    # Note that policies are not residuals so we only need the KL between the immediate previous task and current task
+
+                    prior_cont_dist = self._prior_policies[-1].distribution(
+                        state)  # use prior_state for the immediate previous task
+                    curr_cont_dist = self.policy.distribution(state)
+                    # Convert to MultivariateNormal distributions (for KL calculation)
+                    prior_multiv_cont_dist = torch.distributions.MultivariateNormal(prior_cont_dist.mean,
+                                                                                    torch.diag_embed(
+                                                                                        prior_cont_dist.variance))
+                    curr_multiv_cont_dist = torch.distributions.MultivariateNormal(curr_cont_dist.mean,
+                                                                                   torch.diag_embed(
+                                                                                       curr_cont_dist.variance))
+
+                    # Use Forward KL instead of reverse KL because prior policy distribution could be peaky
+                    self._kl_with_prior_t = torch.distributions.kl.kl_divergence(prior_multiv_cont_dist,
+                                                                                 curr_multiv_cont_dist)
+                    self._kl_with_prior = self._kl_with_prior_t.detach().cpu().numpy()
 
             if self._replay_memory.size > self._warmup_transitions():
                 action_new, log_prob = self.policy.compute_action_and_log_prob_t(state)
@@ -330,7 +397,10 @@ class SAC(DeepAC):
 
             q_next = self._next_q(next_state, absorbing)
             q = reward + self.mdp_info.gamma * q_next
+
             self.Q.append(q.mean())
+            self.rho.append(q.mean())
+            self.q_old.append(0.)
             self._critic_approximator.fit(state, action, q,
                                           **self._critic_fit_params)
 
@@ -345,7 +415,17 @@ class SAC(DeepAC):
 
         q = torch.min(q_0, q_1)
 
-        return (self._alpha * log_prob - q).mean()
+        if self._boosting:
+
+            if self._use_kl_on_pi:
+                # Add a KL penalty for deviating from previous policy (with gradients)
+                q -= torch.tensor(self._kl_on_pi_alpha, device=q.device) * torch.clip(self._kl_with_prior_t, 0.0,
+                                                                                      5000.0)  # TWEAK: Clip the KL because it can explode
+
+        q -= self._alpha * log_prob
+
+        return -q.mean()
+
 
     def _update_alpha(self, log_prob):
         alpha_loss = - (self._log_alpha * (log_prob + self._target_entropy)).mean()

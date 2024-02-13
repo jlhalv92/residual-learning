@@ -1,5 +1,6 @@
+import copy
 import warnings
-
+from dm_control.utils import rewards
 with warnings.catch_warnings():
     warnings.filterwarnings("ignore", category=DeprecationWarning)
     from dm_control import suite
@@ -20,7 +21,7 @@ class DMControl(Environment):
     """
     def __init__(self, domain_name, task_name, horizon=None, gamma=0.99, task_kwargs=None,
                  dt=.01, width_screen=480, height_screen=480, camera_id=0,
-                 use_pixels=False, pixels_width=64, pixels_height=64):
+                 use_pixels=False, pixels_width=64, pixels_height=64, hard_task=False, target_velocity=None):
         """
         Constructor.
 
@@ -40,8 +41,22 @@ class DMControl(Environment):
              pixels_height (int, 64): height of the pixel observation;
 
         """
+        self.task_name = task_name
         # MDP creation
+        self.hard_task = hard_task
         self.env = suite.load(domain_name, task_name, task_kwargs=task_kwargs)
+        self.base_mass = float(self.env.physics.model.body("torso").mass[0])
+        self.horizontal_velocity = []
+        self.upright = []
+        if target_velocity:
+            self.env.task._move_speed = target_velocity
+
+
+        # self.env.physics.model.body("torso").mass += 20
+        # ['world', 'torso', 'right_thigh', 'right_leg', 'right_foot', 'left_thigh', 'left_leg', 'left_foot']
+        # print([self.env.physics.model.body(i).name for i in range(self.env.physics.model.nbody)])
+        # self.env.physics.model.body("left_foot").mass += 20
+        # self.env.physics.model.body("right_foot").mass += 20
 
         if use_pixels:
             self.env = pixels.Wrapper(self.env, render_kwargs={'width': pixels_width, 'height': pixels_height})
@@ -63,7 +78,7 @@ class DMControl(Environment):
         # MDP properties
         action_space = self._convert_action_space(self.env.action_spec())
         observation_space = self._convert_observation_space(self.env.observation_spec())
-        mdp_info = MDPInfo(observation_space, action_space, gamma, horizon, dt)
+        mdp_info = MDPInfo(observation_space, action_space, gamma, horizon)
 
         self._height_screen = height_screen
         self._width_screen = width_screen
@@ -75,6 +90,15 @@ class DMControl(Environment):
         self._state = None
 
     def reset(self, state=None):
+
+        if self.hard_task:
+            load =  np.random.uniform(20, 30)
+        else:
+            load = 0.
+
+        self.env.physics.model.body("torso").mass = self.base_mass
+        self.env.physics.model.body("torso").mass += load
+
         if state is None:
             self._state = self._convert_observation(self.env.reset().observation)
         else:
@@ -84,6 +108,14 @@ class DMControl(Environment):
 
     def step(self, action):
         step = self.env.step(action)
+        _STAND_HEIGHT = 1.2
+        self.horizontal_velocity.append(self.env.physics.horizontal_velocity())
+        standing = rewards.tolerance(self.env.physics.torso_height(),
+                                     bounds=(_STAND_HEIGHT, float('inf')),
+                                     margin=_STAND_HEIGHT / 2)
+        upright = (1 + self.env.physics.torso_upright()) / 2
+        stand_reward = (3 * standing + upright) / 4
+        self.upright.append(stand_reward)
 
         reward = step.reward
         self._state = self._convert_observation(step.observation)

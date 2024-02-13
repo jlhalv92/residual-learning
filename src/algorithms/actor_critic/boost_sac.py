@@ -204,7 +204,7 @@ class SACPolicy(Policy):
                      self._sigma_approximator.model.network.parameters())
 
 
-class SAC(DeepAC):
+class Boosted_SAC(DeepAC):
     """
     Soft Actor-Critic algorithm.
     "Soft Actor-Critic Algorithms and Applications".
@@ -245,6 +245,11 @@ class SAC(DeepAC):
                 of the critic approximator.
 
         """
+
+        self.Q = []
+        self.q_old = []
+        self.rho = []
+        self._boosting = False
         self._critic_fit_params = dict() if critic_fit_params is None else critic_fit_params
 
         self._batch_size = to_parameter(batch_size)
@@ -268,8 +273,6 @@ class SAC(DeepAC):
                                               **critic_params)
         self._target_critic_approximator = Regressor(TorchApproximator,
                                                      **target_critic_params)
-        self._boosting = False  # default. Will be set if setup_boosting is called
-        self._use_kl_on_pi = False
 
         actor_mu_approximator = Regressor(TorchApproximator,
                                           **actor_mu_params)
@@ -308,59 +311,43 @@ class SAC(DeepAC):
             _replay_memory='mushroom',
             _critic_approximator='mushroom',
             _target_critic_approximator='mushroom',
-            _boosting='primitive',
             _log_alpha='torch',
             _alpha_optim='torch'
         )
 
         super().__init__(mdp_info, policy, actor_optimizer, policy_parameters)
 
-    def setup_boosting(self, prior_agents, use_kl_on_pi=False, kl_on_pi_alpha=1e-3):
+
+    def setup_boosting(self, prior_agents, use_kl_on_pi=False, kl_on_pi_alpha=1e-1, use_old_policy=False):
         """
             prior_agents ([mushroom object list]): The agent object from agents trained on prior tasks;
             use_kl_on_pi (bool): Whether to use a kl between the prior task policy and the new policy as a loss on the policy
             kl_on_pi_alpha (float): Alpha parameter to weight the KL divergence loss on the policy
         """
+
         self._boosting = True
         self._prior_critic_approximators = list()
         self._prior_policies = list()
         self._prior_state_dims = list()
-        for prior_agent in prior_agents:
-            self._prior_critic_approximators.append(prior_agent._target_critic_approximator) # The target_critic_approximator object from agents trained on prior tasks
-            self._prior_policies.append(prior_agent.policy) # The policy object from an agent trained on a prior task
-            self._prior_state_dims.append(prior_agent._state_dim)
 
-        self._use_kl_on_pi = use_kl_on_pi # Whether to use a kl between the prior task policy and the new policy as a loss for the new policy
-        self._kl_on_pi_alpha = kl_on_pi_alpha # Alpha parameter to weight the KL divergence loss on the policy
-        self._kl_with_prior = np.array([0.0]) # KL divergence with previous policy (numpy)
-        self._kl_with_prior_t = torch.tensor(0.0) # KL divergence with previous policy (torch)
+        for prior_agent in prior_agents:
+            self._prior_critic_approximators.append(prior_agent._target_critic_approximator)  # The target_critic_approximator object from agents trained on prior tasks
+            self._prior_policies.append(prior_agent.policy)  # The policy object from an agent trained on a prior task
+
+
+        if use_old_policy:
+            self.policy.set_weights(self._prior_policies[-1].get_weights())
+
+        self._use_kl_on_pi = use_kl_on_pi  # Whether to use a kl between the prior task policy and the new policy as a loss for the new policy
+        self._kl_on_pi_alpha = kl_on_pi_alpha  # Alpha parameter to weight the KL divergence loss on the policy
+        self._kl_with_prior = np.array([0.0])  # KL divergence with previous policy (numpy)
+        self._kl_with_prior_t = torch.tensor(0.0)  # KL divergence with previous policy (torch)
 
     def fit(self, dataset):
         self._replay_memory.add(dataset)
         if self._replay_memory.initialized:
             state, action, reward, next_state, absorbing, _ = \
                 self._replay_memory.get(self._batch_size())
-
-            if self._boosting:
-                if self._use_kl_on_pi:
-                    # Calculate KL divergence between current policy and previous policy
-                    # Note that policies are not residuals so we only need the KL between the immediate previous task and current task
-                    prior_state = state[:, 0:self._prior_state_dims[-1]]
-                    prior_cont_dist = self._prior_policies[-1].cont_distribution(
-                        prior_state)  # use prior_state for the immediate previous task
-                    curr_cont_dist = self.policy.cont_distribution(state)
-                    # Convert to MultivariateNormal distributions (for KL calculation)
-                    prior_multiv_cont_dist = torch.distributions.MultivariateNormal(prior_cont_dist.mean,
-                                                                                    torch.diag_embed(
-                                                                                        prior_cont_dist.variance))
-                    curr_multiv_cont_dist = torch.distributions.MultivariateNormal(curr_cont_dist.mean,
-                                                                                   torch.diag_embed(
-                                                                                       curr_cont_dist.variance))
-                    # TODO: Add discrete discrete distribution for KL calculation
-                    # Use Forward KL instead of reverse KL because prior policy distribution could be peaky
-                    self._kl_with_prior_t = torch.distributions.kl.kl_divergence(prior_multiv_cont_dist,
-                                                                                 curr_multiv_cont_dist)
-                    self._kl_with_prior = self._kl_with_prior_t.detach().cpu().numpy()
 
             if self._replay_memory.size > self._warmup_transitions():
                 action_new, log_prob = self.policy.compute_action_and_log_prob_t(state)
@@ -371,45 +358,44 @@ class SAC(DeepAC):
 
             q_next = self._next_q(next_state, absorbing)
             q = reward + self.mdp_info.gamma * q_next
+            self.Q.append(deepcopy(q.mean()))
 
-            rho = q  # residual q
+            rho = q
+            old_q = np.zeros(q.shape)
+
             if self._boosting:
-                for idx, prior_critic in enumerate(self._prior_critic_approximators):
-                    # # Fitting a 'residual q' i.e 'rho'. So we subtract the prior_rho values
-                    # Use prior rho values. Also use appropriate state-spaces as per the prior task
-                    prior_state = state[:, 0:self._prior_state_dims[idx]]
-                    rho_prior = prior_critic.predict(prior_state, action, prediction='min')
-                    rho -= rho_prior  # subtract the prior_rho value
 
-            self._critic_approximator.fit(state, action, rho, **self._critic_fit_params)
+                for old_rho in self._prior_critic_approximators:
+                    rho -= old_rho.predict(state,action, prediction='min')
+                    old_q += deepcopy(old_rho.predict(state,action, prediction='min')).mean()
+
+            self.q_old.append(old_q.mean())
+            self.rho.append(deepcopy(rho.mean()))
+
+            self._critic_approximator.fit(state, action, rho,
+                                          **self._critic_fit_params)
 
             self._update_target(self._critic_approximator,
                                 self._target_critic_approximator)
 
     def _loss(self, state, action_new, log_prob):
-        q_0 = self._critic_approximator(state, action_new,
+
+        rho_0 = self._critic_approximator(state, action_new,
                                         output_tensor=True, idx=0)
-        q_1 = self._critic_approximator(state, action_new,
+        rho_1 = self._critic_approximator(state, action_new,
                                         output_tensor=True, idx=1)
 
-        q = torch.min(q_0, q_1)
+        rho = torch.min(rho_0, rho_1)
 
         if self._boosting:
-            for idx, prior_critic in enumerate(self._prior_critic_approximators):
-                # # For policy loss, use q value as a combination of prior task and current task residual_q (rho) values
-                # Use prior rho values. Also use appropriate state-spaces as per the prior task
-                prior_state = state[:,0:self._prior_state_dims[idx]]
-                # NOTE: We will use the q_prior gradient here for policy fitting but not in the residual_q fitting
-                rho_prior = prior_critic.predict(prior_state, action_new, output_tensor=True, prediction='min').values
-                q += rho_prior
+            for old_rho in self._prior_critic_approximators:
+                rho_old_1 = old_rho(state, action_new,
+                                                output_tensor=True, idx=0)
+                rho_old_2 = old_rho(state, action_new,
+                                                output_tensor=True, idx=1)
+                rho += torch.min(rho_old_1, rho_old_2)
 
-        if self._use_kl_on_pi:
-            # Add a KL penalty for deviating from previous policy (with gradients)
-            q -= torch.tensor(self._kl_on_pi_alpha, device=q.device)*torch.clip(self._kl_with_prior_t, 0.0, 5000.0) # TWEAK: Clip the KL because it can explode
-
-        q -= self._alpha * log_prob
-
-        return q.mean()
+        return (self._alpha * log_prob - rho).mean()
 
     def _update_alpha(self, log_prob):
         alpha_loss = - (self._log_alpha * (log_prob + self._target_entropy)).mean()
@@ -436,12 +422,9 @@ class SAC(DeepAC):
             next_state, a, prediction='min')
 
         if self._boosting:
-            for idx, prior_critic in enumerate(self._prior_critic_approximators):
-                # # 'Next_Q' value should be a combination of prior task and current task residual_q (rho) values
-                # Use prior rho values. Also use appropriate state-spaces as per the prior task
-                prior_next_state = next_state[:, 0:self._prior_state_dims[idx]]
-                rho_prior_next = prior_critic.predict(prior_next_state, a, prediction='min')
-                q += rho_prior_next
+            for old_rho in self._prior_critic_approximators:
+
+                q += old_rho.predict(next_state, a, prediction='min')
 
         q -= self._alpha_np * log_prob_next
 
